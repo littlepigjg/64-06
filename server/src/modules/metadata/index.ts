@@ -266,52 +266,83 @@ export class MetadataIndex {
       .reduce((sum, h) => sum + h.count, 0);
   }
 
-  getTopPackages(period: TrendPeriod = 'week', limit: number = 10): PackageRankingItem[] {
+  private isSmallBaseEdgeCase(
+    periodDownloads: number,
+    previousPeriodDownloads: number
+  ): boolean {
+    const SMALL_BASE_THRESHOLD = 5;
+    const bothSmall = previousPeriodDownloads < SMALL_BASE_THRESHOLD && periodDownloads < SMALL_BASE_THRESHOLD;
+    const droppedToZero = previousPeriodDownloads < SMALL_BASE_THRESHOLD && periodDownloads === 0;
+    return bothSmall || droppedToZero;
+  }
+
+  private calculateTrendInfo(
+    periodDownloads: number,
+    previousPeriodDownloads: number,
+    totalDownloads: number
+  ): { trend: PackageRankingItem['trend']; trendPercent: number } {
+    const hasPeriod = periodDownloads > 0;
+    const hasPrevious = previousPeriodDownloads > 0;
+    const hasAny = totalDownloads > 0;
+
+    if (!hasAny) {
+      return { trend: 'inactive', trendPercent: 0 };
+    }
+
+    if (!hasPrevious && hasPeriod) {
+      return { trend: 'new', trendPercent: 0 };
+    }
+
+    if (!hasPeriod && !hasPrevious && hasAny) {
+      return { trend: 'inactive', trendPercent: 0 };
+    }
+
+    if (this.isSmallBaseEdgeCase(periodDownloads, previousPeriodDownloads)) {
+      return { trend: 'inactive', trendPercent: 0 };
+    }
+
+    if (hasPrevious) {
+      const trendPercent = ((periodDownloads - previousPeriodDownloads) / previousPeriodDownloads) * 100;
+      let trend: PackageRankingItem['trend'] = 'flat';
+      if (trendPercent > 5) trend = 'up';
+      else if (trendPercent < -5) trend = 'down';
+      else trend = 'flat';
+      return { trend, trendPercent };
+    }
+
+    return { trend: 'flat', trendPercent: 0 };
+  }
+
+  private buildRankingItem(
+    pkg: DBPackage,
+    period: TrendPeriod
+  ): PackageRankingItem {
     const { start, prevStart, prevEnd, days } = getLocalDateRangeForPeriod(period);
-    const hasAnyHistory = this.db.downloadHistory.length > 0;
+    const periodDownloads = this.getDownloadsInRange(pkg.id, start);
+    const previousPeriodDownloads = this.getDownloadsInRange(pkg.id, prevStart, prevEnd);
+    const { trend, trendPercent } = this.calculateTrendInfo(
+      periodDownloads,
+      previousPeriodDownloads,
+      pkg.downloadCount
+    );
 
+    return {
+      name: pkg.name,
+      registry: pkg.registry,
+      source: pkg.source,
+      downloadCount: pkg.downloadCount,
+      periodDownloads,
+      previousPeriodDownloads,
+      trend,
+      trendPercent,
+      lastAccessedAt: pkg.lastAccessedAt,
+      dailyDownloads: getDailyDownloadsLocal(pkg.id, days, this.db.downloadHistory),
+    };
+  }
+
+  getTopPackages(period: TrendPeriod = 'week', limit: number = 10): PackageRankingItem[] {
     const rankings = this.db.packages
-      .map((pkg) => {
-        const periodDownloads = this.getDownloadsInRange(pkg.id, start);
-        const previousPeriodDownloads = this.getDownloadsInRange(pkg.id, prevStart, prevEnd);
-        const totalDownloads = pkg.downloadCount;
-
-        let trend: PackageRankingItem['trend'] = 'flat';
-        let trendPercent = 0;
-
-        const hasPeriodDownloads = periodDownloads > 0;
-        const hasPreviousDownloads = previousPeriodDownloads > 0;
-        const hasAnyDownloads = totalDownloads > 0;
-
-        if (!hasAnyDownloads) {
-          trend = 'inactive';
-          trendPercent = 0;
-        } else if (!hasPreviousDownloads && hasPeriodDownloads) {
-          trend = 'new';
-          trendPercent = 0;
-        } else if (!hasPeriodDownloads && !hasPreviousDownloads && hasAnyDownloads) {
-          trend = 'inactive';
-          trendPercent = 0;
-        } else if (hasPreviousDownloads) {
-          trendPercent = ((periodDownloads - previousPeriodDownloads) / previousPeriodDownloads) * 100;
-          if (trendPercent > 5) trend = 'up';
-          else if (trendPercent < -5) trend = 'down';
-          else trend = 'flat';
-        }
-
-        return {
-          name: pkg.name,
-          registry: pkg.registry,
-          source: pkg.source,
-          downloadCount: pkg.downloadCount,
-          periodDownloads,
-          previousPeriodDownloads,
-          trend,
-          trendPercent,
-          lastAccessedAt: pkg.lastAccessedAt,
-          dailyDownloads: getDailyDownloadsLocal(pkg.id, days, this.db.downloadHistory),
-        };
-      })
+      .map((pkg) => this.buildRankingItem(pkg, period))
       .sort((a, b) => b.periodDownloads - a.periodDownloads || b.downloadCount - a.downloadCount)
       .slice(0, limit);
 
