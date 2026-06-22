@@ -3,7 +3,7 @@ import { config } from '../../config';
 import { getMetadataIndex } from '../metadata';
 import { getCacheStorage } from '../cache';
 import { parseNpmPackageName } from '../../utils';
-import type { RegistryType, PackageSource, PackageVersion } from '../../types';
+import type { RegistryType, PackageSource, PackageVersion, TrendPeriod } from '../../types';
 import semver from 'semver';
 
 const router = Router();
@@ -135,6 +135,16 @@ router.get('/stats/trend', (req: Request, res: Response) => {
   const metadata = getMetadataIndex();
   const days = parseInt(typeof req.query.days === 'string' ? req.query.days : '30', 10);
   res.json(metadata.getStorageTrend(Math.min(days, 365)));
+});
+
+router.get('/stats/ranking', (req: Request, res: Response) => {
+  const metadata = getMetadataIndex();
+  const period =
+    typeof req.query.period === 'string' && ['day', 'week', 'month'].includes(req.query.period)
+      ? (req.query.period as TrendPeriod)
+      : 'week';
+  const limit = parseInt(typeof req.query.limit === 'string' ? req.query.limit : '10', 10);
+  res.json(metadata.getTopPackages(period, Math.min(limit, 50)));
 });
 
 router.get('/cache/policy', (_req: Request, res: Response) => {

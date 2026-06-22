@@ -50,3 +50,23 @@ export interface CachePolicy {
   maxAgeDays: number;
   autoClean: boolean;
 }
+
+export type TrendPeriod = 'day' | 'week' | 'month';
+
+export interface DailyDownload {
+  date: string;
+  count: number;
+}
+
+export interface PackageRankingItem {
+  name: string;
+  registry: RegistryType;
+  source: PackageSource;
+  downloadCount: number;
+  periodDownloads: number;
+  previousPeriodDownloads: number;
+  trend: 'up' | 'down' | 'flat';
+  trendPercent: number;
+  lastAccessedAt: number;
+  dailyDownloads: DailyDownload[];
+}

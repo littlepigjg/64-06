@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ensureDir, formatDate, getDirSize } from '../../utils';
 import { config } from '../../config';
-import type { PackageInfo, PackageVersion, CacheStats, StorageTrend, CachePolicy, RegistryType, PackageSource } from '../../types';
+import type { PackageInfo, PackageVersion, CacheStats, StorageTrend, CachePolicy, RegistryType, PackageSource, TrendPeriod, PackageRankingItem, DailyDownload } from '../../types';
 
 interface DBPackage {
   id: number;
@@ -18,6 +18,7 @@ interface DBPackage {
   updatedAt: number;
   totalSize: number;
   downloadCount: number;
+  lastAccessedAt: number;
 }
 
 interface DBVersion {
@@ -31,6 +32,12 @@ interface DBVersion {
   downloadCount: number;
 }
 
+interface DBDownloadHistory {
+  packageId: number;
+  date: string;
+  count: number;
+}
+
 interface DB {
   nextPackageId: number;
   nextVersionId: number;
@@ -38,6 +45,7 @@ interface DB {
   versions: DBVersion[];
   storageTrend: StorageTrend[];
   cachePolicy: CachePolicy;
+  downloadHistory: DBDownloadHistory[];
 }
 
 const DEFAULT_POLICY: CachePolicy = {
@@ -64,13 +72,18 @@ export class MetadataIndex {
       try {
         const raw = fs.readFileSync(this.dbPath, 'utf-8');
         const parsed = JSON.parse(raw);
+        const packages: DBPackage[] = (parsed.packages || []).map((p: any) => ({
+          ...p,
+          lastAccessedAt: p.lastAccessedAt || p.updatedAt || 0,
+        }));
         return {
           nextPackageId: parsed.nextPackageId || 1,
           nextVersionId: parsed.nextVersionId || 1,
-          packages: parsed.packages || [],
+          packages,
           versions: parsed.versions || [],
           storageTrend: parsed.storageTrend || [],
           cachePolicy: parsed.cachePolicy || { ...DEFAULT_POLICY, ...config.cache },
+          downloadHistory: parsed.downloadHistory || [],
         };
       } catch {
         // fall through to default
@@ -83,6 +96,7 @@ export class MetadataIndex {
       versions: [],
       storageTrend: [],
       cachePolicy: { ...DEFAULT_POLICY, ...config.cache },
+      downloadHistory: [],
     };
   }
 
@@ -125,6 +139,7 @@ export class MetadataIndex {
       updatedAt: now,
       totalSize: 0,
       downloadCount: 0,
+      lastAccessedAt: now,
     });
     this.scheduleSave();
     return id;
@@ -202,8 +217,128 @@ export class MetadataIndex {
     );
     if (v) v.downloadCount++;
     const pkg = this.db.packages.find((p) => p.id === packageId);
-    if (pkg) pkg.downloadCount++;
+    const now = Date.now();
+    const today = formatDate(now);
+    if (pkg) {
+      pkg.downloadCount++;
+      pkg.lastAccessedAt = now;
+    }
+    const existingHistory = this.db.downloadHistory.find(
+      (h) => h.packageId === packageId && h.date === today
+    );
+    if (existingHistory) {
+      existingHistory.count++;
+    } else {
+      this.db.downloadHistory.push({
+        packageId,
+        date: today,
+        count: 1,
+      });
+    }
+    this.cleanupOldDownloadHistory();
     this.scheduleSave();
+  }
+
+  private cleanupOldDownloadHistory(): void {
+    const cutoffDate = this.getDateBeforeDays(365);
+    this.db.downloadHistory = this.db.downloadHistory.filter(
+      (h) => h.date >= cutoffDate
+    );
+  }
+
+  private getDateBeforeDays(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return formatDate(d.getTime());
+  }
+
+  private getDateRangeForPeriod(period: TrendPeriod): { start: string; prevStart: string; prevEnd: string; days: number } {
+    const now = new Date();
+    const today = formatDate(now.getTime());
+    let days = 1;
+    if (period === 'week') days = 7;
+    if (period === 'month') days = 30;
+
+    const periodStart = new Date(now);
+    periodStart.setDate(periodStart.getDate() - days + 1);
+    const start = formatDate(periodStart.getTime());
+
+    const prevPeriodEnd = new Date(periodStart);
+    prevPeriodEnd.setDate(prevPeriodEnd.getDate() - 1);
+    const prevEnd = formatDate(prevPeriodEnd.getTime());
+
+    const prevPeriodStart = new Date(prevPeriodEnd);
+    prevPeriodStart.setDate(prevPeriodStart.getDate() - days + 1);
+    const prevStart = formatDate(prevPeriodStart.getTime());
+
+    return { start, prevStart, prevEnd, days };
+  }
+
+  private getDownloadsInRange(packageId: number, startDate: string, endDate?: string): number {
+    return this.db.downloadHistory
+      .filter((h) => {
+        if (endDate) {
+          return h.packageId === packageId && h.date >= startDate && h.date <= endDate;
+        }
+        return h.packageId === packageId && h.date >= startDate;
+      })
+      .reduce((sum, h) => sum + h.count, 0);
+  }
+
+  private getDailyDownloads(packageId: number, days: number): DailyDownload[] {
+    const result: DailyDownload[] = [];
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = formatDate(d.getTime());
+      const record = this.db.downloadHistory.find(
+        (h) => h.packageId === packageId && h.date === dateStr
+      );
+      result.push({
+        date: dateStr,
+        count: record?.count || 0,
+      });
+    }
+    return result;
+  }
+
+  getTopPackages(period: TrendPeriod = 'week', limit: number = 10): PackageRankingItem[] {
+    const { start, prevStart, prevEnd, days } = this.getDateRangeForPeriod(period);
+
+    const rankings = this.db.packages
+      .map((pkg) => {
+        const periodDownloads = this.getDownloadsInRange(pkg.id, start);
+        const previousPeriodDownloads = this.getDownloadsInRange(pkg.id, prevStart, prevEnd);
+
+        let trend: 'up' | 'down' | 'flat' = 'flat';
+        let trendPercent = 0;
+        if (previousPeriodDownloads > 0) {
+          trendPercent = ((periodDownloads - previousPeriodDownloads) / previousPeriodDownloads) * 100;
+          if (trendPercent > 5) trend = 'up';
+          else if (trendPercent < -5) trend = 'down';
+        } else if (periodDownloads > 0) {
+          trend = 'up';
+          trendPercent = 100;
+        }
+
+        return {
+          name: pkg.name,
+          registry: pkg.registry,
+          source: pkg.source,
+          downloadCount: pkg.downloadCount,
+          periodDownloads,
+          previousPeriodDownloads,
+          trend,
+          trendPercent,
+          lastAccessedAt: pkg.lastAccessedAt,
+          dailyDownloads: this.getDailyDownloads(pkg.id, days),
+        };
+      })
+      .sort((a, b) => b.periodDownloads - a.periodDownloads || b.downloadCount - a.downloadCount)
+      .slice(0, limit);
+
+    return rankings;
   }
 
   getPackage(name: string, registry: RegistryType): PackageInfo | null {

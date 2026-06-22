@@ -7,6 +7,8 @@ import type {
   HealthInfo,
   RegistryType,
   PackageSource,
+  TrendPeriod,
+  PackageRankingItem,
 } from './types';
 
 const API_BASE = '/api';
@@ -70,6 +72,9 @@ export const api = {
 
   getTrend: (days: number = 30) =>
     request<StorageTrend[]>(`/stats/trend?days=${days}`),
+
+  getRanking: (period: TrendPeriod = 'week', limit: number = 10) =>
+    request<PackageRankingItem[]>(`/stats/ranking?period=${period}&limit=${limit}`),
 
   getCachePolicy: () => request<CachePolicy>('/cache/policy'),
 
