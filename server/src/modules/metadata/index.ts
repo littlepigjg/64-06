@@ -1,6 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureDir, formatDate, getDirSize } from '../../utils';
+import {
+  ensureDir,
+  formatDate,
+  getDirSize,
+  formatLocalDate,
+  getLocalDateBeforeDays,
+  getLocalDateRangeForPeriod,
+  getDailyDownloadsLocal,
+  getDaysInPeriod,
+} from '../../utils';
 import { config } from '../../config';
 import type { PackageInfo, PackageVersion, CacheStats, StorageTrend, CachePolicy, RegistryType, PackageSource, TrendPeriod, PackageRankingItem, DailyDownload } from '../../types';
 
@@ -218,7 +227,7 @@ export class MetadataIndex {
     if (v) v.downloadCount++;
     const pkg = this.db.packages.find((p) => p.id === packageId);
     const now = Date.now();
-    const today = formatDate(now);
+    const today = formatLocalDate(now);
     if (pkg) {
       pkg.downloadCount++;
       pkg.lastAccessedAt = now;
@@ -240,38 +249,10 @@ export class MetadataIndex {
   }
 
   private cleanupOldDownloadHistory(): void {
-    const cutoffDate = this.getDateBeforeDays(365);
+    const cutoffDate = getLocalDateBeforeDays(365);
     this.db.downloadHistory = this.db.downloadHistory.filter(
       (h) => h.date >= cutoffDate
     );
-  }
-
-  private getDateBeforeDays(days: number): string {
-    const d = new Date();
-    d.setDate(d.getDate() - days);
-    return formatDate(d.getTime());
-  }
-
-  private getDateRangeForPeriod(period: TrendPeriod): { start: string; prevStart: string; prevEnd: string; days: number } {
-    const now = new Date();
-    const today = formatDate(now.getTime());
-    let days = 1;
-    if (period === 'week') days = 7;
-    if (period === 'month') days = 30;
-
-    const periodStart = new Date(now);
-    periodStart.setDate(periodStart.getDate() - days + 1);
-    const start = formatDate(periodStart.getTime());
-
-    const prevPeriodEnd = new Date(periodStart);
-    prevPeriodEnd.setDate(prevPeriodEnd.getDate() - 1);
-    const prevEnd = formatDate(prevPeriodEnd.getTime());
-
-    const prevPeriodStart = new Date(prevPeriodEnd);
-    prevPeriodStart.setDate(prevPeriodStart.getDate() - days + 1);
-    const prevStart = formatDate(prevPeriodStart.getTime());
-
-    return { start, prevStart, prevEnd, days };
   }
 
   private getDownloadsInRange(packageId: number, startDate: string, endDate?: string): number {
@@ -285,41 +266,37 @@ export class MetadataIndex {
       .reduce((sum, h) => sum + h.count, 0);
   }
 
-  private getDailyDownloads(packageId: number, days: number): DailyDownload[] {
-    const result: DailyDownload[] = [];
-    const now = new Date();
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = formatDate(d.getTime());
-      const record = this.db.downloadHistory.find(
-        (h) => h.packageId === packageId && h.date === dateStr
-      );
-      result.push({
-        date: dateStr,
-        count: record?.count || 0,
-      });
-    }
-    return result;
-  }
-
   getTopPackages(period: TrendPeriod = 'week', limit: number = 10): PackageRankingItem[] {
-    const { start, prevStart, prevEnd, days } = this.getDateRangeForPeriod(period);
+    const { start, prevStart, prevEnd, days } = getLocalDateRangeForPeriod(period);
+    const hasAnyHistory = this.db.downloadHistory.length > 0;
 
     const rankings = this.db.packages
       .map((pkg) => {
         const periodDownloads = this.getDownloadsInRange(pkg.id, start);
         const previousPeriodDownloads = this.getDownloadsInRange(pkg.id, prevStart, prevEnd);
+        const totalDownloads = pkg.downloadCount;
 
-        let trend: 'up' | 'down' | 'flat' = 'flat';
+        let trend: PackageRankingItem['trend'] = 'flat';
         let trendPercent = 0;
-        if (previousPeriodDownloads > 0) {
+
+        const hasPeriodDownloads = periodDownloads > 0;
+        const hasPreviousDownloads = previousPeriodDownloads > 0;
+        const hasAnyDownloads = totalDownloads > 0;
+
+        if (!hasAnyDownloads) {
+          trend = 'inactive';
+          trendPercent = 0;
+        } else if (!hasPreviousDownloads && hasPeriodDownloads) {
+          trend = 'new';
+          trendPercent = 0;
+        } else if (!hasPeriodDownloads && !hasPreviousDownloads && hasAnyDownloads) {
+          trend = 'inactive';
+          trendPercent = 0;
+        } else if (hasPreviousDownloads) {
           trendPercent = ((periodDownloads - previousPeriodDownloads) / previousPeriodDownloads) * 100;
           if (trendPercent > 5) trend = 'up';
           else if (trendPercent < -5) trend = 'down';
-        } else if (periodDownloads > 0) {
-          trend = 'up';
-          trendPercent = 100;
+          else trend = 'flat';
         }
 
         return {
@@ -332,7 +309,7 @@ export class MetadataIndex {
           trend,
           trendPercent,
           lastAccessedAt: pkg.lastAccessedAt,
-          dailyDownloads: this.getDailyDownloads(pkg.id, days),
+          dailyDownloads: getDailyDownloadsLocal(pkg.id, days, this.db.downloadHistory),
         };
       })
       .sort((a, b) => b.periodDownloads - a.periodDownloads || b.downloadCount - a.downloadCount)

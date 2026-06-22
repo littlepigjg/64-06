@@ -39,6 +39,82 @@ export function formatDate(ts: number): string {
   return new Date(ts).toISOString().split('T')[0];
 }
 
+export function formatLocalDate(ts: number = Date.now()): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function getLocalDateBeforeDays(days: number, fromTs: number = Date.now()): string {
+  const d = new Date(fromTs);
+  d.setDate(d.getDate() - days);
+  return formatLocalDate(d.getTime());
+}
+
+export function getDaysInPeriod(period: 'day' | 'week' | 'month'): number {
+  switch (period) {
+    case 'day':
+      return 1;
+    case 'week':
+      return 7;
+    case 'month':
+      return 30;
+  }
+}
+
+export interface DateRangeForPeriod {
+  start: string;
+  prevStart: string;
+  prevEnd: string;
+  days: number;
+}
+
+export function getLocalDateRangeForPeriod(
+  period: 'day' | 'week' | 'month'
+): DateRangeForPeriod {
+  const now = Date.now();
+  const today = formatLocalDate(now);
+  const days = getDaysInPeriod(period);
+
+  const periodStart = new Date(now);
+  periodStart.setDate(periodStart.getDate() - days + 1);
+  const start = formatLocalDate(periodStart.getTime());
+
+  const prevPeriodEnd = new Date(periodStart);
+  prevPeriodEnd.setDate(prevPeriodEnd.getDate() - 1);
+  const prevEnd = formatLocalDate(prevPeriodEnd.getTime());
+
+  const prevPeriodStart = new Date(prevPeriodEnd);
+  prevPeriodStart.setDate(prevPeriodStart.getDate() - days + 1);
+  const prevStart = formatLocalDate(prevPeriodStart.getTime());
+
+  return { start, prevStart, prevEnd, days };
+}
+
+export function getDailyDownloadsLocal(
+  packageId: number,
+  days: number,
+  downloadHistory: Array<{ packageId: number; date: string; count: number }>
+): Array<{ date: string; count: number }> {
+  const result: Array<{ date: string; count: number }> = [];
+  const now = Date.now();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const dateStr = formatLocalDate(d.getTime());
+    const record = downloadHistory.find(
+      (h) => h.packageId === packageId && h.date === dateStr
+    );
+    result.push({
+      date: dateStr,
+      count: record?.count || 0,
+    });
+  }
+  return result;
+}
+
 export function parseNpmPackageName(name: string): { scope?: string; name: string } {
   if (name.startsWith('@')) {
     const parts = name.split('/');

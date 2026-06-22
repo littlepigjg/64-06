@@ -10,6 +10,8 @@ import {
   Loader2,
   RefreshCw,
   Minus,
+  Sparkles,
+  Pause,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -447,7 +449,15 @@ export default function Dashboard() {
                       <Line
                         type="monotone"
                         dataKey="count"
-                        stroke={item.trend === 'down' ? '#ef4444' : '#10b981'}
+                        stroke={
+                          item.trend === 'down'
+                            ? '#ef4444'
+                            : item.trend === 'inactive'
+                            ? '#94a3b8'
+                            : item.trend === 'new'
+                            ? '#8b5cf6'
+                            : '#10b981'
+                        }
                         strokeWidth={2}
                         dot={false}
                       />
@@ -462,6 +472,10 @@ export default function Dashboard() {
                         ? 'bg-emerald-50 text-emerald-600'
                         : item.trend === 'down'
                         ? 'bg-red-50 text-red-600'
+                        : item.trend === 'new'
+                        ? 'bg-violet-50 text-violet-600'
+                        : item.trend === 'inactive'
+                        ? 'bg-slate-100 text-slate-500'
                         : 'bg-slate-100 text-slate-500'
                     }`}
                   >
@@ -469,12 +483,20 @@ export default function Dashboard() {
                       <TrendingUp size={14} />
                     ) : item.trend === 'down' ? (
                       <TrendingDown size={14} />
+                    ) : item.trend === 'new' ? (
+                      <Sparkles size={14} />
+                    ) : item.trend === 'inactive' ? (
+                      <Pause size={14} />
                     ) : (
                       <Minus size={14} />
                     )}
                     <span>
                       {item.trend === 'flat'
                         ? '持平'
+                        : item.trend === 'new'
+                        ? '新增'
+                        : item.trend === 'inactive'
+                        ? '不活跃'
                         : `${item.trendPercent > 0 ? '+' : ''}${item.trendPercent.toFixed(0)}%`}
                     </span>
                   </div>

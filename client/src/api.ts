@@ -8,6 +8,7 @@ import type {
   RegistryType,
   PackageSource,
   TrendPeriod,
+  TrendStatus,
   PackageRankingItem,
 } from './types';
 

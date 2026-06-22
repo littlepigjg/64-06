@@ -52,6 +52,7 @@ export interface CachePolicy {
 }
 
 export type TrendPeriod = 'day' | 'week' | 'month';
+export type TrendStatus = 'up' | 'down' | 'flat' | 'new' | 'inactive';
 
 export interface DailyDownload {
   date: string;
@@ -65,7 +66,7 @@ export interface PackageRankingItem {
   downloadCount: number;
   periodDownloads: number;
   previousPeriodDownloads: number;
-  trend: 'up' | 'down' | 'flat';
+  trend: TrendStatus;
   trendPercent: number;
   lastAccessedAt: number;
   dailyDownloads: DailyDownload[];
